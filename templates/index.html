@@ -1,22 +1,113 @@
 {% extends "base.html" %}
-{% block subtitle %}{{ total }} videos tracked across {{ channels|length }} channels{% endblock %}
+{% block subtitle %}{{ total }} of {{ grand_total }} videos shown{% endblock %}
 
 {% block content %}
-  <h2>Analysis queue</h2>
+  <h2>Queue</h2>
   <div class="cards">
     <div class="card">
-      <div class="name"><a href="{{ url_for('analyses') }}">Analyses</a></div>
-      <div class="stat">{{ analyses.get('done', 0) }} done &middot; {{ analyses.get('error', 0) }} error &middot; {{ analyses.get('running', 0) }} running</div>
-      <div class="stat">{{ analyses.get('pending', 0) }} pending &middot; <span class="{{ 'short-count' if analyses.get('short', 0) }}">{{ analyses.get('short', 0) }} short</span> &middot; avg {{ analyses.get('avg_words', 0) }} words</div>
+      <div class="name"><a href="{{ list_url(status=None) }}">All videos</a></div>
+      <div class="stat">{{ buckets['none'] }} not analyzed &middot; {{ buckets['running'] }} running &middot; {{ buckets['invalid'] }} invalid</div>
+      <div class="stat">{{ buckets['done'] }} done &middot; <span class="{{ 'short-count' if buckets['short'] else '' }}">{{ buckets['short'] }} short</span> &middot; {{ buckets['error'] }} error</div>
+      <div class="stat">{{ buckets['pending'] }} due for the worker &middot; avg {{ analyses.get('avg_words', 0) }} words</div>
     </div>
   </div>
+
+  <h2>Videos &amp; analyses</h2>
+
+  <div class="filters">
+    <a href="{{ list_url(status=None) }}" class="{{ 'active' if not status }}">All ({{ buckets['all'] }})</a>
+    <a href="{{ list_url(status='done') }}" class="{{ 'active' if status == 'done' }}">Done ({{ buckets['done'] }})</a>
+    <a href="{{ list_url(status='short') }}" class="{{ 'active' if status == 'short' }}">Short (&lt; {{ analyses.get('min_words', 0) }} words: {{ buckets['short'] }})</a>
+    <a href="{{ list_url(status='error') }}" class="{{ 'active' if status == 'error' }}">Error ({{ buckets['error'] }})</a>
+    <a href="{{ list_url(status='running') }}" class="{{ 'active' if status == 'running' }}">Running ({{ buckets['running'] }})</a>
+    <a href="{{ list_url(status='invalid') }}" class="{{ 'active' if status == 'invalid' }}">Invalid ({{ buckets['invalid'] }})</a>
+    <a href="{{ list_url(status='none') }}" class="{{ 'active' if status == 'none' }}">Not analyzed ({{ buckets['none'] }})</a>
+  </div>
+
+  <form class="toolbar" method="get" action="{{ url_for('index') }}">
+    {% if status %}<input type="hidden" name="status" value="{{ status }}">{% endif %}
+    <select name="channel" onchange="this.form.submit()">
+      <option value="">All channels</option>
+      {% for c in channels %}
+        <option value="{{ c['id'] }}" {{ 'selected' if channel_id == c['id'] else '' }}>{{ c['name'] or c['url'] }} ({{ c['video_count'] }})</option>
+      {% endfor %}
+    </select>
+    <input type="search" name="q" value="{{ q or '' }}" placeholder="search title&hellip;">
+    <button type="submit">Filter</button>
+    {% if status or channel_id or q %}<a href="{{ url_for('index') }}">clear</a>{% endif %}
+  </form>
+
+  {% if videos %}
+    <table>
+      <thead>
+        <tr>
+          <th>Uploaded</th>
+          <th>Channel</th>
+          <th>Video</th>
+          <th>Analysis</th>
+          <th>Finished</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for v in videos %}
+          <tr>
+            <td>{{ v.uploaded_display }}</td>
+            <td><a href="{{ list_url(channel=v.channel_id, offset=None) }}">{{ v.channel_name or v.channel_url }}</a></td>
+            <td>
+              <a href="{{ v.url }}" target="_blank" rel="noopener">{{ v.title }}</a>
+              <div class="sub"><span class="kind {{ 'live' if v.kind == 'live' else '' }}">{{ v.kind }}</span> {{ v.duration_display }}</div>
+            </td>
+            <td>
+              {% if v.analysis_status %}
+                <span class="badge {{ v.analysis_status }}">{{ v.analysis_status }}</span>
+                {% if v.short %}<span class="badge short">short</span>{% endif %}
+                {% if v.word_count %}<span class="muted">{{ v.word_count }} words</span>{% endif %}
+                {% if v.analysis_status in ('error', 'invalid') and v.attempts %}<span class="muted">attempt {{ v.attempts }}</span>{% endif %}
+              {% else %}
+                <span class="badge none">not analyzed</span>
+              {% endif %}
+            </td>
+            <td class="muted">{{ v.finished_at[:19] | replace('T', ' ') if v.finished_at else '-' }}</td>
+            <td>
+              {% if v.has_answer %}<a href="{{ url_for('analysis', video_id=v.video_id) }}">answer</a>{% endif %}
+              {% if v.analysis_status and v.analysis_status != 'invalid' %}
+                <form method="post" action="{{ url_for('invalidate_analysis', video_id=v.video_id) }}">
+                  <input type="hidden" name="next" value="{{ list_url() }}">
+                  <button class="linkish" type="submit"
+                          onclick="return confirm('Mark this analysis invalid and re-queue it?')">{{ 'reset' if v.analysis_status == 'running' else 'invalid & retry' }}</button>
+                </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <div class="pager">
+      {% if offset > 0 %}
+        <a href="{{ list_url(offset=(offset - limit) if offset - limit > 0 else None) }}">&laquo; Newer</a>
+      {% endif %}
+      <span class="muted">Showing {{ offset + 1 }}-{{ offset + videos|length }} of {{ total }}</span>
+      {% if offset + limit < total %}
+        <a href="{{ list_url(offset=offset + limit) }}">Older &raquo;</a>
+      {% endif %}
+    </div>
+  {% else %}
+    <p class="empty">
+      Nothing matches these filters.
+      {% if not status and not channel_id and not q %}
+        Run <code>python list_channels.py</code> to populate the DB.
+      {% endif %}
+    </p>
+  {% endif %}
 
   <h2>Channels</h2>
   {% if channels %}
     <div class="cards">
       {% for c in channels %}
         <div class="card">
-          <div class="name"><a href="{{ url_for('channel', channel_id=c['id']) }}">{{ c['name'] or c['url'] }}</a></div>
+          <div class="name"><a href="{{ url_for('index', channel=c['id']) }}">{{ c['name'] or c['url'] }}</a></div>
           <div class="stat">{{ c['video_count'] }} videos</div>
           <div class="stat">
             last scraped:
@@ -27,34 +118,6 @@
     </div>
   {% else %}
     <p class="empty">No channels yet. Run <code>python list_channels.py</code> to populate the DB.</p>
-  {% endif %}
-
-  <h2>Recent videos</h2>
-  {% if videos %}
-    <table>
-      <thead>
-        <tr>
-          <th>Uploaded</th>
-          <th>Channel</th>
-          <th>Kind</th>
-          <th>Duration</th>
-          <th>Title</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for v in videos %}
-          <tr>
-            <td>{{ v.uploaded_display }}</td>
-            <td><a href="{{ url_for('channel', channel_id=v.channel_id) }}">{{ v.channel_name or v.channel_url }}</a></td>
-            <td><span class="kind {{ 'live' if v.kind == 'live' }}">{{ v.kind }}</span></td>
-            <td>{{ v.duration_display }}</td>
-            <td><a href="{{ v.url }}" target="_blank" rel="noopener">{{ v.title }}</a></td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  {% else %}
-    <p class="empty">No videos stored yet.</p>
   {% endif %}
 
   {% if runs %}

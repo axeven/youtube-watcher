@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Web viewer + analysis queue API for scraped YouTube channel data.
 
-The viewer is read-only; the /api/analyses/* endpoints are used by the local
-analyze_worker.py to claim a video and submit the Gemini answer. Run directly
-(`python web_app.py`) for local dev, or under gunicorn in the container
+The viewer is one list: every video with its analysis state attached (see
+db.get_combined_videos), filtered by analysis bucket, channel or title search.
+The /api/analyses/* endpoints are used by the local analyze_worker.py to claim
+a video and submit the Gemini answer. Run directly (`python web_app.py`) for
+local dev, or under gunicorn in the container
 (`gunicorn --bind 0.0.0.0:8000 web_app:app`).
 """
 import hmac
@@ -37,6 +39,9 @@ def format_timestamp(ts) -> str:
 
 
 def video_to_dict(row) -> dict:
+    """A unified list row: the video's own fields plus its analysis state,
+    which is all None when the video has never been claimed."""
+    word_count = row["word_count"]
     return {
         "video_id": row["video_id"],
         "channel_id": row["channel_id"],
@@ -52,6 +57,17 @@ def video_to_dict(row) -> dict:
         "uploaded_display": format_timestamp(row["timestamp"]),
         "first_seen_at": row["first_seen_at"],
         "last_seen_at": row["last_seen_at"],
+        "analysis_status": row["analysis_status"],
+        "word_count": word_count,
+        "attempts": row["attempts"],
+        "analysis_started_at": row["analysis_started_at"],
+        "finished_at": row["finished_at"],
+        "analysis_error": row["analysis_error"],
+        "has_answer": bool(row["has_answer"]),
+        # Same rule as db.count_analyses(): a finished answer that is too short.
+        "short": row["analysis_status"] == "done"
+        and word_count is not None
+        and word_count < MIN_ANSWER_WORDS,
     }
 
 
@@ -90,6 +106,21 @@ def analysis_to_dict(row) -> dict:
     }
 
 
+def list_filters() -> dict:
+    """The unified list's filters, read off the query string.
+
+    `status` is one of db.COMBINED_STATUSES - an unknown value means "no
+    filter" - plus an optional channel id and a title search term."""
+    status = request.args.get("status") or None
+    if status not in db.COMBINED_STATUSES:
+        status = None
+    return {
+        "status": status,
+        "channel_id": request.args.get("channel", type=int),
+        "q": (request.args.get("q") or "").strip() or None,
+    }
+
+
 def create_app() -> Flask:
     app = Flask(__name__)
     app.jinja_env.filters["duration"] = format_duration
@@ -110,47 +141,107 @@ def create_app() -> Flask:
 
     @app.route("/")
     def index():
-        channels = db.get_channels()
+        """The single list: every video, newest first, with its analysis state
+        and filters over the analysis buckets."""
+        filters = list_filters()
         limit = min(max(parse_int(request.args.get("limit"), DEFAULT_LIMIT), 1), MAX_LIMIT)
-        videos = [video_to_dict(v) for v in db.get_videos(limit=limit)]
+        offset = max(parse_int(request.args.get("offset"), 0), 0)
+
+        def list_url(**overrides) -> str:
+            """This view with some args swapped in, so the bucket links, the
+            channel picker and paging all keep the other filters."""
+            args = {
+                "status": filters["status"],
+                "channel": filters["channel_id"],
+                "q": filters["q"],
+                "limit": limit,
+                "offset": offset,
+            }
+            args.update(overrides)
+            return url_for("index", **{k: v for k, v in args.items() if v not in (None, "", 0)})
+
+        videos = [
+            video_to_dict(v)
+            for v in db.get_combined_videos(
+                status=filters["status"],
+                channel_id=filters["channel_id"],
+                q=filters["q"],
+                limit=limit,
+                offset=offset,
+                min_words=MIN_ANSWER_WORDS,
+            )
+        ]
         return render_template(
             "index.html",
-            channels=channels,
+            channels=db.get_channels(),
             videos=videos,
-            total=db.count_videos(),
-            runs=db.get_recent_scrape_runs(),
+            total=db.count_combined_videos(
+                status=filters["status"],
+                channel_id=filters["channel_id"],
+                q=filters["q"],
+                min_words=MIN_ANSWER_WORDS,
+            ),
+            grand_total=db.count_combined_videos(min_words=MIN_ANSWER_WORDS),
+            buckets=db.combined_counts(min_words=MIN_ANSWER_WORDS),
             analyses=db.count_analyses(min_words=MIN_ANSWER_WORDS),
+            runs=db.get_recent_scrape_runs(),
+            limit=limit,
+            offset=offset,
+            list_url=list_url,
+            **filters,
         )
+
+    @app.route("/analyses")
+    def analyses():
+        """Kept for old bookmarks: analyses are a filter on the unified list
+        now, defaulting to the finished answers."""
+        status = request.args.get("status") or "done"
+        if status not in db.COMBINED_STATUSES:
+            status = None
+        args = {"status": status}
+        for key in ("channel", "q", "limit", "offset"):
+            value = request.args.get(key)
+            if value:
+                args[key] = value
+        return redirect(url_for("index", **args))
 
     @app.route("/channel/<int:channel_id>")
     def channel(channel_id: int):
-        row = db.get_channel(channel_id)
-        if row is None:
+        """Kept for old bookmarks: a channel is a filter on the unified list."""
+        if db.get_channel(channel_id) is None:
             abort(404)
-        limit = min(max(parse_int(request.args.get("limit"), DEFAULT_LIMIT), 1), MAX_LIMIT)
-        offset = max(parse_int(request.args.get("offset"), 0), 0)
-        videos = [video_to_dict(v) for v in db.get_videos(channel_id, limit=limit, offset=offset)]
-        return render_template(
-            "channel.html",
-            channel=row,
-            videos=videos,
-            total=db.count_videos(channel_id),
-            limit=limit,
-            offset=offset,
-        )
+        return redirect(url_for("index", channel=channel_id))
 
     @app.route("/api/videos")
     def api_videos():
-        channel_id = request.args.get("channel_id", type=int)
+        """Every video with its analysis state, same filters as the list."""
+        filters = list_filters()
+        # `channel_id` is the older spelling of this filter; keep it working.
+        channel_id = filters["channel_id"]
+        if channel_id is None:
+            channel_id = request.args.get("channel_id", type=int)
         limit = min(max(parse_int(request.args.get("limit"), DEFAULT_LIMIT), 1), MAX_LIMIT)
         offset = max(parse_int(request.args.get("offset"), 0), 0)
-        videos = db.get_videos(channel_id, limit=limit, offset=offset)
+        videos = db.get_combined_videos(
+            status=filters["status"],
+            channel_id=channel_id,
+            q=filters["q"],
+            limit=limit,
+            offset=offset,
+            min_words=MIN_ANSWER_WORDS,
+        )
         return jsonify(
             {
                 "count": len(videos),
-                "total": db.count_videos(channel_id),
+                "total": db.count_combined_videos(
+                    status=filters["status"],
+                    channel_id=channel_id,
+                    q=filters["q"],
+                    min_words=MIN_ANSWER_WORDS,
+                ),
                 "limit": limit,
                 "offset": offset,
+                "buckets": db.combined_counts(min_words=MIN_ANSWER_WORDS),
                 "videos": [video_to_dict(v) for v in videos],
             }
         )
@@ -172,36 +263,6 @@ def create_app() -> Flask:
             }
         )
 
-    @app.route("/analyses")
-    def analyses():
-        limit = min(max(parse_int(request.args.get("limit"), DEFAULT_LIMIT), 1), MAX_LIMIT)
-        offset = max(parse_int(request.args.get("offset"), 0), 0)
-        status = request.args.get("status") or None
-        max_words = MIN_ANSWER_WORDS if status == "short" else None
-        rows = [
-            analysis_to_dict(r)
-            for r in db.get_analyses(
-                limit=limit, offset=offset, status=status if status != "short" else None,
-                max_words=max_words,
-            )
-        ]
-        counts = db.count_analyses(min_words=MIN_ANSWER_WORDS)
-        if status == "short":
-            total = counts["short"]
-        elif status:
-            total = counts.get(status, 0)
-        else:
-            total = sum(counts.get(s, 0) for s in ("running", "done", "error", "invalid"))
-        return render_template(
-            "analyses.html",
-            analyses=rows,
-            counts=counts,
-            status=status,
-            limit=limit,
-            offset=offset,
-            total=total,
-        )
-
     @app.route("/analysis/<video_id>")
     def analysis(video_id: str):
         row = db.get_analysis(video_id)
@@ -212,6 +273,11 @@ def create_app() -> Flask:
     @app.route("/analysis/<video_id>/invalid", methods=["POST"])
     def invalidate_analysis(video_id: str):
         db.mark_analysis_invalid(video_id)
+        # The list posts here with ?next=<this view>, so re-queuing from the
+        # list comes back to the same filters instead of the detail page.
+        target = request.form.get("next") or request.args.get("next")
+        if target and target.startswith("/") and not target.startswith("//"):
+            return redirect(target)
         return redirect(url_for("analysis", video_id=video_id))
 
     @app.route("/api/analyses/claim", methods=["POST"])

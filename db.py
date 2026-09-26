@@ -224,39 +224,132 @@ def get_channel(channel_id: int) -> sqlite3.Row | None:
         ).fetchone()
 
 
-def count_videos(channel_id: int | None = None) -> int:
+# --- Unified video + analysis listing ---------------------------------------
+#
+# The viewer lists videos once, with their analysis state attached, instead of
+# a videos table and a separate analyses table you have to cross-reference.
+# The buckets below partition the videos table - every video is in exactly one
+# of none/running/done/short/error/invalid - which is what the filter bar shows.
+COMBINED_STATUSES = ("none", "running", "done", "short", "error", "invalid")
+
+_COMBINED_FROM = """
+    FROM videos v
+    JOIN channels c ON c.id = v.channel_id
+    LEFT JOIN analyses a ON a.video_id = v.video_id
+"""
+
+_COMBINED_SELECT = """
+    SELECT v.*, c.name AS channel_name, c.url AS channel_url,
+           a.status      AS analysis_status,
+           a.word_count  AS word_count,
+           a.attempts    AS attempts,
+           a.error       AS analysis_error,
+           a.model_mode  AS model_mode,
+           a.started_at  AS analysis_started_at,
+           a.finished_at AS finished_at,
+           a.answer IS NOT NULL AS has_answer
+"""
+
+
+def _status_clause(status: str | None, min_words: int) -> tuple[str, list]:
+    """SQL predicate (no WHERE) plus params for one analysis bucket.
+
+    'short' uses the same rule as count_analyses(): a done answer below
+    min_words. A done row with a NULL word_count counts as done, not short, so
+    the buckets stay consistent with the queue's own accounting."""
+    if status == "none":
+        return "a.video_id IS NULL", []
+    if status == "running":
+        return "a.status = 'running'", []
+    if status == "done":
+        return "a.status = 'done' AND (a.word_count IS NULL OR a.word_count >= ?)", [min_words]
+    if status == "short":
+        return "a.status = 'done' AND a.word_count IS NOT NULL AND a.word_count < ?", [min_words]
+    if status == "error":
+        return "a.status = 'error'", []
+    if status == "invalid":
+        return "a.status = 'invalid'", []
+    return "", []
+
+
+def _like_pattern(term: str) -> str:
+    """Escape a user-supplied search term so % and _ match literally."""
+    escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+def _combined_where(
+    status: str | None, channel_id: int | None, q: str | None, min_words: int
+) -> tuple[str, list]:
+    conditions: list[str] = []
+    params: list = []
+    clause, clause_params = _status_clause(status, min_words)
+    if clause:
+        conditions.append(clause)
+        params.extend(clause_params)
+    if channel_id is not None:
+        conditions.append("v.channel_id = ?")
+        params.append(channel_id)
+    if q:
+        conditions.append("v.title LIKE ? ESCAPE '\\'")
+        params.append(_like_pattern(q))
+    where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+    return where, params
+
+
+def get_combined_videos(
+    status: str | None = None,
+    channel_id: int | None = None,
+    q: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    min_words: int = 50,
+) -> list[sqlite3.Row]:
+    """Newest first, one row per video, analysis columns folded in."""
+    where, params = _combined_where(status, channel_id, q, min_words)
     with get_connection() as conn:
-        if channel_id is None:
-            return conn.execute("SELECT COUNT(*) AS n FROM videos").fetchone()["n"]
         return conn.execute(
-            "SELECT COUNT(*) AS n FROM videos WHERE channel_id = ?", (channel_id,)
+            _COMBINED_SELECT + _COMBINED_FROM + where
+            + " ORDER BY v.timestamp DESC LIMIT ? OFFSET ?",
+            (*params, limit, offset),
+        ).fetchall()
+
+
+def count_combined_videos(
+    status: str | None = None,
+    channel_id: int | None = None,
+    q: str | None = None,
+    min_words: int = 50,
+) -> int:
+    where, params = _combined_where(status, channel_id, q, min_words)
+    with get_connection() as conn:
+        return conn.execute(
+            "SELECT COUNT(*) AS n" + _COMBINED_FROM + where, params
         ).fetchone()["n"]
 
 
-def get_videos(
-    channel_id: int | None = None, limit: int = 50, offset: int = 0
-) -> list[sqlite3.Row]:
+def combined_counts(
+    min_words: int = 50, max_attempts: int = 3, stale_minutes: int = 120
+) -> dict:
+    """Per-bucket video counts for the filter bar, plus 'pending' - how many
+    videos the worker would consider due (see _analysis_eligible_clause)."""
     with get_connection() as conn:
-        if channel_id is None:
-            return conn.execute(
-                """
-                SELECT v.*, c.name AS channel_name, c.url AS channel_url
-                FROM videos v JOIN channels c ON c.id = v.channel_id
-                ORDER BY v.timestamp DESC
-                LIMIT ? OFFSET ?
-                """,
-                (limit, offset),
-            ).fetchall()
-        return conn.execute(
-            """
-            SELECT v.*, c.name AS channel_name, c.url AS channel_url
-            FROM videos v JOIN channels c ON c.id = v.channel_id
-            WHERE v.channel_id = ?
-            ORDER BY v.timestamp DESC
-            LIMIT ? OFFSET ?
+        counts = {"all": conn.execute("SELECT COUNT(*) AS n FROM videos").fetchone()["n"]}
+        for bucket in COMBINED_STATUSES:
+            clause, params = _status_clause(bucket, min_words)
+            counts[bucket] = conn.execute(
+                "SELECT COUNT(*) AS n" + _COMBINED_FROM + f" WHERE {clause}", params
+            ).fetchone()["n"]
+        counts["pending"] = conn.execute(
+            f"""
+            SELECT COUNT(*) AS n
+            FROM videos v
+            LEFT JOIN analyses a ON a.video_id = v.video_id
+            WHERE {_analysis_eligible_clause()}
             """,
-            (channel_id, limit, offset),
-        ).fetchall()
+            (max_attempts, min_words, max_attempts, now_iso()),
+        ).fetchone()["n"]
+        return counts
 
 
 def get_recent_scrape_runs(limit: int = 10) -> list[sqlite3.Row]:
