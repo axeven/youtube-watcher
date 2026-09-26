@@ -1,0 +1,2 @@
+# Every 3 hours. flock prevents overlap with the startup run or a slow run.
+0 */3 * * * flock -n /tmp/scrape.lock python /app/list_channels.py --quiet

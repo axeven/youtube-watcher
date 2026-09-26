@@ -1,0 +1,23 @@
+services:
+  watcher:
+    build: .
+    image: youtube-watcher
+    container_name: youtube-watcher
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      TZ: Asia/Jakarta
+      DB_PATH: /data/watcher.db
+      VIDEO_CACHE_FILE: /data/video_cache.json
+      COOKIES_SRC: /cookies/yt-cookies.txt
+      YT_COOKIES_FILE: /tmp/yt-cookies.txt
+      ANALYSIS_TOKEN: ${ANALYSIS_TOKEN}
+      ANALYSIS_MIN_WORDS: ${ANALYSIS_MIN_WORDS:-50}
+    volumes:
+      - watcher-data:/data
+      - ./.yt-cookies.txt:/cookies/yt-cookies.txt:ro
+      - ./channels.txt:/app/channels.txt:ro
+
+volumes:
+  watcher-data:

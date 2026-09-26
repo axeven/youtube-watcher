@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}{{ a.title or a.video_id }} - Analysis{% endblock %}
+{% block subtitle %}<span class="badge {{ a.status }}">{{ a.status }}</span>{% endblock %}
+
+{% block content %}
+  <h2>{{ a.title or a.video_id }}</h2>
+  <p class="muted">
+    <a href="{{ a.url }}" target="_blank" rel="noopener">{{ a.url }}</a><br>
+    {{ a.channel_name or '-' }}
+    {% if a.upload_date %} &middot; uploaded {{ a.upload_date }}{% endif %}
+    &middot; attempts: {{ a.attempts }}
+    {% if a.model_mode %} &middot; mode: {{ a.model_mode }}{% endif %}
+  </p>
+  <p class="muted">
+    claimed: {{ a.started_at or '-' }}
+    {% if a.finished_at %}&middot; finished: {{ a.finished_at }}{% endif %}
+    {% if a.answer %} &middot; <span class="{{ 'short-count' if a.short }}">{{ a.word_count }} words</span>{% endif %}
+    {% if a.short %}<span class="badge short">short - likely a soft failure</span>{% endif %}
+  </p>
+
+  {% if a.error %}
+    <h2>Error</h2>
+    <pre class="answer">{{ a.error }}</pre>
+  {% endif %}
+
+  <h2>Answer</h2>
+  {% if a.answer %}
+    <pre class="answer">{{ a.answer }}</pre>
+  {% else %}
+    <p class="empty">No answer yet.</p>
+  {% endif %}
+
+  <p class="muted"><a href="{{ url_for('analyses') }}">&laquo; All analyses</a></p>
+
+  <form method="post" action="{{ url_for('invalidate_analysis', video_id=a.video_id) }}">
+    <button type="submit"
+            onclick="return confirm('Mark this analysis invalid and re-queue it?')">
+      {% if a.status == 'invalid' %}Re-queue (invalid)
+      {% elif a.status == 'running' %}Reset stuck run
+      {% else %}Mark invalid &amp; retry{% endif %}
+    </button>
+  </form>
+{% endblock %}

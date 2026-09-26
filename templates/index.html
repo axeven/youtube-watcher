@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block subtitle %}{{ total }} videos tracked across {{ channels|length }} channels{% endblock %}
+
+{% block content %}
+  <h2>Analysis queue</h2>
+  <div class="cards">
+    <div class="card">
+      <div class="name"><a href="{{ url_for('analyses') }}">Analyses</a></div>
+      <div class="stat">{{ analyses.get('done', 0) }} done &middot; {{ analyses.get('error', 0) }} error &middot; {{ analyses.get('running', 0) }} running</div>
+      <div class="stat">{{ analyses.get('pending', 0) }} pending &middot; <span class="{{ 'short-count' if analyses.get('short', 0) }}">{{ analyses.get('short', 0) }} short</span> &middot; avg {{ analyses.get('avg_words', 0) }} words</div>
+    </div>
+  </div>
+
+  <h2>Channels</h2>
+  {% if channels %}
+    <div class="cards">
+      {% for c in channels %}
+        <div class="card">
+          <div class="name"><a href="{{ url_for('channel', channel_id=c['id']) }}">{{ c['name'] or c['url'] }}</a></div>
+          <div class="stat">{{ c['video_count'] }} videos</div>
+          <div class="stat">
+            last scraped:
+            {% if c['last_scraped_at'] %}{{ c['last_scraped_at'][:19] | replace('T', ' ') }}{% else %}never{% endif %}
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p class="empty">No channels yet. Run <code>python list_channels.py</code> to populate the DB.</p>
+  {% endif %}
+
+  <h2>Recent videos</h2>
+  {% if videos %}
+    <table>
+      <thead>
+        <tr>
+          <th>Uploaded</th>
+          <th>Channel</th>
+          <th>Kind</th>
+          <th>Duration</th>
+          <th>Title</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for v in videos %}
+          <tr>
+            <td>{{ v.uploaded_display }}</td>
+            <td><a href="{{ url_for('channel', channel_id=v.channel_id) }}">{{ v.channel_name or v.channel_url }}</a></td>
+            <td><span class="kind {{ 'live' if v.kind == 'live' }}">{{ v.kind }}</span></td>
+            <td>{{ v.duration_display }}</td>
+            <td><a href="{{ v.url }}" target="_blank" rel="noopener">{{ v.title }}</a></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="empty">No videos stored yet.</p>
+  {% endif %}
+
+  {% if runs %}
+    <h2>Recent scrape runs</h2>
+    <table>
+      <thead>
+        <tr><th>Started</th><th>Status</th><th>OK</th><th>Failed</th><th>Videos</th></tr>
+      </thead>
+      <tbody>
+        {% for r in runs %}
+          <tr>
+            <td>{{ r['started_at'][:19] | replace('T', ' ') }}</td>
+            <td>{{ r['status'] }}</td>
+            <td>{{ r['channels_ok'] }}</td>
+            <td>{{ r['channels_failed'] }}</td>
+            <td>{{ r['videos_upserted'] }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+{% endblock %}

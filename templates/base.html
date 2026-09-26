@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}YouTube Watcher{% endblock %}</title>
+  <style>
+    :root { color-scheme: light dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.45;
+      background: #0f1115;
+      color: #e6e6e6;
+    }
+    header {
+      padding: 1rem 1.5rem;
+      border-bottom: 1px solid #262a33;
+      display: flex;
+      align-items: baseline;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    header h1 { font-size: 1.1rem; margin: 0; }
+    header a { color: #8ab4f8; text-decoration: none; }
+    header nav { display: flex; gap: 1rem; }
+    header nav a.active { color: #e6e6e6; font-weight: 600; }
+    main { padding: 1.5rem; max-width: 1200px; margin: 0 auto; }
+    h2 { font-size: 1rem; text-transform: uppercase; letter-spacing: .05em; color: #9aa0ac; }
+    table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+    th, td { text-align: left; padding: .5rem .6rem; border-bottom: 1px solid #22262e; vertical-align: top; }
+    th { color: #9aa0ac; font-weight: 600; white-space: nowrap; }
+    tr:hover td { background: #161a21; }
+    a { color: #8ab4f8; }
+    .muted { color: #7f8590; font-size: .85rem; }
+    .kind {
+      display: inline-block; font-size: .72rem; padding: .05rem .4rem; border-radius: .5rem;
+      background: #2a2f3a; color: #cfd3da; text-transform: uppercase; letter-spacing: .04em;
+    }
+    .kind.live { background: #3a2530; color: #ffb4c1; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: .75rem; margin-bottom: 1.5rem; }
+    .card { background: #161a21; border: 1px solid #262a33; border-radius: .5rem; padding: .75rem .9rem; }
+    .card .name { font-weight: 600; }
+    .card .stat { color: #9aa0ac; font-size: .82rem; margin-top: .25rem; }
+    .pager { margin-top: 1rem; display: flex; gap: 1rem; align-items: center; }
+    .empty { color: #7f8590; padding: 1rem 0; }
+    code { background: #22262e; padding: .1rem .3rem; border-radius: .25rem; }
+    .badge {
+      display: inline-block; font-size: .72rem; padding: .05rem .45rem; border-radius: .5rem;
+      background: #2a2f3a; color: #cfd3da; text-transform: uppercase; letter-spacing: .04em;
+    }
+    .badge.done { background: #1f3a2a; color: #9be8b4; }
+    .badge.error { background: #3a2530; color: #ffb4c1; }
+    .badge.running { background: #3a3320; color: #ffe08a; }
+    .badge.short { background: #4a3a12; color: #ffd479; }
+    .badge.invalid { background: #3a2a4a; color: #cbb4ff; }
+    .short-count { color: #ffd479; font-weight: 600; }
+    button.linkish {
+      background: none; border: none; color: #8ab4f8; cursor: pointer;
+      font: inherit; padding: 0; text-decoration: underline;
+    }
+    .filters { display: flex; gap: .75rem; margin-bottom: 1rem; }
+    .filters a.active { font-weight: 600; color: #e6e6e6; }
+    pre.answer {
+      white-space: pre-wrap; word-wrap: break-word; background: #161a21;
+      border: 1px solid #262a33; border-radius: .5rem; padding: 1rem; font-size: .88rem;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1><a href="{{ url_for('index') }}">YouTube Watcher</a></h1>
+    <nav>
+      <a href="{{ url_for('index') }}">Videos</a>
+      <a href="{{ url_for('analyses') }}">Analyses</a>
+    </nav>
+    <span class="muted">{% block subtitle %}{% endblock %}</span>
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

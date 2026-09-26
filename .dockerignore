@@ -1,0 +1,11 @@
+venv/
+.browser-profile/
+results/
+__pycache__/
+*.pyc
+.git/
+.gitignore
+.video_cache.json
+*.md
+watcher.db
+watcher.db-*

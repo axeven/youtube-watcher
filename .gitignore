@@ -1,0 +1,11 @@
+venv/
+.browser-profile/
+__pycache__/
+*.pyc
+results/
+.yt-cookies.txt
+.video_cache.json
+.env
+*.log
+.analyze_worker.lock
+watcher.db*
