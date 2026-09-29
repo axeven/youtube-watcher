@@ -54,7 +54,7 @@ def main():
         print(answer.strip())
         return
 
-    session = BrowserSession(headless=False)
+    session = BrowserSession()
 
     try:
         session.page.goto(GEMINI_URL, wait_until="domcontentloaded")

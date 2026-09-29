@@ -13,6 +13,7 @@ Config (env, or a .env file next to this script):
     ANALYZE_TIMEOUT        seconds to wait for streaming to finish (default 300)
     ANALYSIS_MIN_WORDS     answers shorter than this are soft failures (default 50)
     ANALYSIS_ATTEMPTS      immediate retries when an answer is short/empty (default 2)
+    BROWSER_HEADLESS       0 opens a real Chrome window instead of headless (default 1)
 """
 import json
 import os
@@ -134,7 +135,9 @@ def cached_answer(url: str) -> str | None:
 
 
 def _ask_once(url: str) -> str:
-    session = BrowserSession(headless=False)
+    # Windowless by default; BROWSER_HEADLESS=0 opens a real window (see
+    # browser_session).
+    session = BrowserSession()
     try:
         session.page.goto(GEMINI_URL, wait_until="domcontentloaded")
         session.page.wait_for_timeout(2000)
