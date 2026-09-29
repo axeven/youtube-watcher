@@ -55,7 +55,21 @@
             <td>{{ v.uploaded_display }}</td>
             <td><a href="{{ list_url(channel=v.channel_id, offset=None) }}">{{ v.channel_name or v.channel_url }}</a></td>
             <td>
-              <a href="{{ v.url }}" target="_blank" rel="noopener">{{ v.title }}</a>
+              {% if v.has_analysis %}
+                <a href="{{ url_for('analysis', video_id=v.video_id) }}">{{ v.title }}</a>
+              {% else %}
+                {{ v.title }}
+              {% endif %}
+              <a class="ext" href="{{ v.url }}" target="_blank" rel="noopener"
+                 title="Open on YouTube" aria-label="Open on YouTube">
+                <svg class="icon" viewBox="0 0 24 24" width="13" height="13" fill="none"
+                     stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                     stroke-linejoin="round" aria-hidden="true">
+                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                  <path d="M15 3h6v6"/>
+                  <path d="M10 14 21 3"/>
+                </svg>
+              </a>
               <div class="sub"><span class="kind {{ 'live' if v.kind == 'live' else '' }}">{{ v.kind }}</span> {{ v.duration_display }}</div>
             </td>
             <td>
@@ -70,7 +84,6 @@
             </td>
             <td class="muted">{{ v.finished_at[:19] | replace('T', ' ') if v.finished_at else '-' }}</td>
             <td>
-              {% if v.has_answer %}<a href="{{ url_for('analysis', video_id=v.video_id) }}">answer</a>{% endif %}
               {% if v.analysis_status and v.analysis_status != 'invalid' %}
                 <form method="post" action="{{ url_for('invalidate_analysis', video_id=v.video_id) }}">
                   <input type="hidden" name="next" value="{{ list_url() }}">

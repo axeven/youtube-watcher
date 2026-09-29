@@ -247,6 +247,7 @@ _COMBINED_SELECT = """
            a.model_mode  AS model_mode,
            a.started_at  AS analysis_started_at,
            a.finished_at AS finished_at,
+           a.status IS NOT NULL AS has_analysis,
            a.answer IS NOT NULL AS has_answer
 """
 

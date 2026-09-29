@@ -40,7 +40,12 @@ def format_timestamp(ts) -> str:
 
 def video_to_dict(row) -> dict:
     """A unified list row: the video's own fields plus its analysis state,
-    which is all None when the video has never been claimed."""
+    which is all None when the video has never been claimed.
+
+    `has_analysis` means the video has an analyses row at all (so its detail
+    page renders, even for error/invalid/running); `has_answer` means that row
+    carries the Gemini answer.
+    """
     word_count = row["word_count"]
     return {
         "video_id": row["video_id"],
@@ -63,6 +68,7 @@ def video_to_dict(row) -> dict:
         "analysis_started_at": row["analysis_started_at"],
         "finished_at": row["finished_at"],
         "analysis_error": row["analysis_error"],
+        "has_analysis": bool(row["has_analysis"]),
         "has_answer": bool(row["has_answer"]),
         # Same rule as db.count_analyses(): a finished answer that is too short.
         "short": row["analysis_status"] == "done"

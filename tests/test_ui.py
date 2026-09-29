@@ -6,6 +6,7 @@ Mutates only the snapshot (invalidate + a synthetic short answer).
 import os
 import re
 import sys
+from html import escape as html_escape
 
 REPO = "/home/lathif/github/axeven/youtube-watcher"
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -45,7 +46,36 @@ html = r.get_data(as_text=True)
 check("GET / is 200", r.status_code == 200, r.status_code)
 check("unified heading present", "Videos &amp; analyses" in html)
 check("default page shows 50 rows", rows(html) == 50, rows(html))
-check("rows link to answers", "/analysis/" in html)
+# The Video column is the analysis link; YouTube is the icon link beside it.
+page_rows = db.get_combined_videos(limit=50, min_words=50)
+analyzed_in_page = sum(1 for v in page_rows if v["has_analysis"])
+check(
+    f"analyzed titles link to /analysis/ ({analyzed_in_page} of 50 rows)",
+    html.count('href="/analysis/') == analyzed_in_page,
+    html.count('href="/analysis/'),
+)
+check(
+    "unanalyzed titles are plain text",
+    all(
+        f'href="/analysis/{v["video_id"]}"' not in html
+        for v in page_rows
+        if not v["has_analysis"]
+    ),
+)
+check("every row has the youtube icon link", html.count('class="ext"') == 50, html.count('class="ext"'))
+check(
+    "icon links open the video in a new tab",
+    html.count('target="_blank" rel="noopener"') == 50,
+    html.count('target="_blank" rel="noopener"'),
+)
+_link_row = next(v for v in page_rows if v["has_analysis"])
+_link_title = html_escape(_link_row["title"]).replace("&#x27;", "&#39;")
+check(
+    "analysis link wraps the title text",
+    f'<a href="/analysis/{_link_row["video_id"]}">{_link_title}</a>' in html,
+    _link_row["video_id"],
+)
+check("old 'answer' column link is gone", ">answer</a>" not in html)
 check("not-analyzed badge shown", "not analyzed" in html)
 check("subtitle counts", f"of {buckets['all']} videos shown" in html)
 check("filter bar counts rendered", f"Done ({buckets['done']})" in html and f"Not analyzed ({buckets['none']})" in html)
