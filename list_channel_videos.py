@@ -3,6 +3,12 @@
 live streams, combined and sorted by upload date. Uses yt-dlp - free, no API
 key or quota needed.
 
+Videos and streams are fetched in the same pass and land in the same list (one
+scrape run, one analysis queue); they only differ in how many of each are kept
+- the newest `count` videos plus the newest STREAM_KEEP streams, so a prolific
+uploader cannot crowd its own Live tab out. Streams that are still running or
+only scheduled are skipped until they finish. See the constants below.
+
 Usage:
     python list_channel_videos.py "https://www.youtube.com/@Bennix" [count]
 """
@@ -40,6 +46,19 @@ class _NoSaveYoutubeDL(yt_dlp.YoutubeDL):
 # filtering out member-only content still leaves enough candidates. Each
 # candidate not already in the cache costs one real request, so keep modest.
 FLAT_FETCH_LIMIT = 20
+
+# How many of the newest livestreams to keep per channel, on top of `count`
+# videos. Not a separate scrape or queue - streams ride the same pass and the
+# same list - but they do need their own share of it: a channel's /videos tab is
+# almost always newer than its /streams tab, so one combined newest-first cap
+# lets the videos crowd every stream out and the Live tab is never watched.
+STREAM_KEEP = 10
+
+# Live statuses with nothing to watch yet: an in-progress stream has no
+# transcript and an upcoming one has no video at all, so storing them would
+# only burn analysis attempts on a guaranteed soft failure. Both reappear as
+# was_live on a later scrape, once they have ended and been processed.
+NOT_YET_WATCHABLE_LIVE_STATUSES = {"is_live", "is_upcoming"}
 
 # Seconds to wait between per-video enrichment requests (only applies to
 # cache misses - cached videos don't need a request at all).
@@ -147,6 +166,8 @@ def fetch_flat_candidates(channel_url: str, tab: str, kind: str) -> list[dict]:
     for e in entries:
         if e.get("availability") not in PUBLIC_AVAILABILITY:
             continue
+        if e.get("live_status") in NOT_YET_WATCHABLE_LIVE_STATUSES:
+            continue
         candidates.append({"id": e["id"], "url": e["url"], "kind": kind})
     return candidates
 
@@ -181,7 +202,12 @@ def enrich_with_timestamp(candidate: dict, retries: int = 3) -> dict | None:
     }
 
 
-def list_recent(channel_url: str, count: int = 20) -> list[dict]:
+def list_recent(
+    channel_url: str, count: int = 20, stream_count: int = STREAM_KEEP
+) -> list[dict]:
+    """The channel's newest `count` videos plus its newest `stream_count` past
+    livestreams, merged newest first. The two budgets are independent so a
+    prolific uploader cannot crowd its own Live tab out of the window."""
     flat_candidates = fetch_flat_candidates(channel_url, "videos", "video") + fetch_flat_candidates(
         channel_url, "streams", "live"
     )
@@ -214,7 +240,9 @@ def list_recent(channel_url: str, count: int = 20) -> list[dict]:
             _save_cache()  # persist incrementally so progress survives interruptions
 
     enriched.sort(key=lambda x: x["timestamp"], reverse=True)
-    return enriched[:count]
+    videos = [e for e in enriched if e["kind"] == "video"][:count]
+    streams = [e for e in enriched if e["kind"] == "live"][:stream_count]
+    return sorted(videos + streams, key=lambda x: x["timestamp"], reverse=True)
 
 
 def format_duration(seconds) -> str:
